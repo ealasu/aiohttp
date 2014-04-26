@@ -129,6 +129,30 @@ class HttpRequestTests(unittest.TestCase):
                           headers={'host': 'example.com'})
         self.assertEqual(req.headers['host'], 'example.com')
 
+    def test_http_proxy(self):
+        req = HttpRequest('get', 'http://python.org/',
+                proxies={'http': 'http://1.2.3.4:2345'})
+
+        self.assertEqual(req.host, '1.2.3.4')
+        self.assertEqual(req.port, 2345)
+        self.assertFalse(req.ssl)
+        self.assertEqual(req.headers['host'], 'python.org')
+        self.assertEqual(req.path, 'http://python.org/')
+
+    def test_http_proxy_wrong_scheme(self):
+        req = HttpRequest('get', 'https://python.org/',
+                proxies={'http': 'http://1.2.3.4:2345'})
+
+        # not proxied
+        self.assertEqual(req.host, 'python.org')
+        self.assertEqual(req.port, 443)
+        self.assertTrue(req.ssl)
+
+    def test_proxy_unsupported_scheme(self):
+        with self.assertRaises(ValueError):
+            req = HttpRequest('get', 'http://python.org/',
+                    proxies={'http': 'abc://1.2.3.4:2345'})
+
     def test_headers(self):
         req = HttpRequest('get', 'http://python.org/',
                           headers={'Content-Type': 'text/plain'})

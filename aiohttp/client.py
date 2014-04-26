@@ -39,6 +39,7 @@ def request(method, url, *,
             compress=None,
             chunked=None,
             expect100=False,
+            proxies=None,
             connector=None,
             loop=None,
             read_until_eof=True,
@@ -94,7 +95,7 @@ def request(method, url, *,
             method, url, params=params, headers=headers, data=data,
             cookies=cookies, files=files, auth=auth, encoding=encoding,
             version=version, compress=compress, chunked=chunked,
-            loop=loop, expect100=expect100)
+            loop=loop, expect100=expect100, proxies=proxies)
 
         try:
             conn = yield from connector.connect(req)
@@ -164,7 +165,7 @@ class HttpRequest:
                  params=None, headers=None, data=None, cookies=None,
                  files=None, auth=None, encoding='utf-8', version=(1, 1),
                  compress=None, chunked=None, expect100=False,
-                 verify_ssl=True, loop=None):
+                 verify_ssl=True, loop=None, proxies=None):
         self.url = url
         self.method = method.upper()
         self.encoding = encoding
@@ -172,6 +173,7 @@ class HttpRequest:
         self.compress = compress
         self.verify_ssl = verify_ssl
         self.loop = loop
+        self.proxies = proxies
 
         self.update_version(version)
         self.update_host(url)
@@ -232,6 +234,32 @@ class HttpRequest:
 
         self.host = netloc
 
+        # handle proxy, if present
+        proxy = self._get_proxy()
+        if proxy is not None:
+            proxy_url = urllib.parse.urlsplit(proxy, 'http')
+            proxy_scheme = proxy_url.scheme
+            if proxy_scheme not in ('http', 'https'):
+                raise ValueError(
+                    'unsupported proxy type {}'.format(proxy_scheme))
+            self.host = proxy_url.hostname
+            if proxy_url.port is None:
+                if proxy_scheme == 'http':
+                    self.port = http.client.HTTP_PORT
+                elif proxy_scheme == 'https':
+                    self.port = http.client.HTTPS_PORT
+            else:
+                self.port = proxy_url.port
+
+    def _get_proxy(self):
+        # TODO: look at env variables if self.proxies is None
+        if self.proxies is None:
+            return None
+        if self.ssl:
+            return self.proxies.get('https', None)
+        else:
+            return self.proxies.get('http', None)
+
     def update_version(self, version):
         """Convert request version to two elements tuple.
 
@@ -270,8 +298,12 @@ class HttpRequest:
             else:
                 query = params
 
+        # if using a proxy, send the whole url
+        if self._get_proxy() is None:
+            scheme, netloc = ('', '')
+
         self.path = urllib.parse.urlunsplit(
-            ('', '', urllib.parse.quote(path, safe='/%'), query, fragment))
+            (scheme, netloc, urllib.parse.quote(path, safe='/%'), query, fragment))
 
     def update_headers(self, headers):
         """Update request headers."""
@@ -289,7 +321,10 @@ class HttpRequest:
 
         # add host
         if 'host' not in self.headers:
-            self.headers['Host'] = self.host
+            if self._get_proxy() is not None:
+                self.headers['Host'] = urllib.parse.urlsplit(self.url).netloc
+            else:
+                self.headers['Host'] = self.host
 
     def update_cookies(self, cookies):
         """Update request cookies header."""
